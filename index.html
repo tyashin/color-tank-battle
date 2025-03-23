@@ -1,0 +1,780 @@
+// Button click handler function handleControlButtonClick() { if (!gameRunning)
+{ // Start/restart the game startGame(); controlBtn.textContent = "Restart
+Simulation"; } else { // Stop current game gameRunning = false; // Clear
+existing tanks tanks = []; // Small delay before starting new game
+setTimeout(startGame, 100); } }<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Color Tank Battle</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background-color: #222;
+        font-family: Arial, sans-serif;
+      }
+      canvas {
+        display: block;
+        background-color: #111;
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+      #overlay {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: rgba(0, 0, 0, 0.6);
+        color: white;
+        padding: 10px;
+        border-radius: 5px;
+        font-family: "Courier New", monospace;
+        z-index: 10;
+        max-width: 300px;
+        height: 160px; /* Fixed height for the overlay */
+        overflow-y: auto; /* Allow scrolling if content overflows */
+      }
+      #statsPanel {
+        margin-top: 8px;
+        font-size: 14px;
+      }
+      h3 {
+        margin: 0 0 8px 0;
+        font-size: 16px;
+      }
+      .color-count {
+        display: inline-block;
+        margin-right: 8px;
+        padding: 2px 4px;
+        border-radius: 3px;
+      }
+      #controlBtn {
+        position: absolute;
+        top: 180px; /* Position below the overlay */
+        left: 10px;
+        background-color: #4caf50;
+        border: none;
+        color: white;
+        padding: 8px 16px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+        z-index: 10;
+      }
+      #controlBtn:hover {
+        background-color: #45a049;
+      }
+      #controlBtn:active {
+        background-color: #3e8e41;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="overlay">
+      <h3>Color Tank Battle</h3>
+      <div id="statsPanel">Loading...</div>
+    </div>
+    <button id="controlBtn">Start Simulation</button>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+      // Global variables
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+      const statsPanel = document.getElementById("statsPanel");
+      const controlBtn = document.getElementById("controlBtn");
+
+      const TANK_SIZE = 30;
+      const PROJECTILE_SIZE = 8;
+      const TANK_SPEED = 0.15; // Slow movement
+      const PROJECTILE_SPEED = 0.75; // Slow projectiles
+      const FIRING_RANGE = 300;
+      const FIRING_COOLDOWN = 6000; // 6 seconds cooldown for slow firing
+      const NUM_COLORS = 6;
+      const TANKS_PER_COLOR = 5; // 5 tanks of each color
+
+      // Add polyfill for roundRect if not supported
+      if (!CanvasRenderingContext2D.prototype.roundRect) {
+        CanvasRenderingContext2D.prototype.roundRect = function (
+          x,
+          y,
+          w,
+          h,
+          r
+        ) {
+          if (w < 2 * r) r = w / 2;
+          if (h < 2 * r) r = h / 2;
+          this.beginPath();
+          this.moveTo(x + r, y);
+          this.arcTo(x + w, y, x + w, y + h, r);
+          this.arcTo(x + w, y + h, x, y + h, r);
+          this.arcTo(x, y + h, x, y, r);
+          this.arcTo(x, y, x + w, y, r);
+          this.closePath();
+          return this;
+        };
+      }
+
+      const COLORS = {
+        1: "#FF0000", // Red
+        2: "#FF8000", // Orange
+        3: "#FFFF00", // Yellow
+        4: "#00FF00", // Green
+        5: "#0080FF", // Blue
+        6: "#8000FF", // Violet
+      };
+
+      const colorNames = {
+        1: "Red",
+        2: "Orange",
+        3: "Yellow",
+        4: "Green",
+        5: "Blue",
+        6: "Violet",
+      };
+
+      let tanks = [];
+      let lastFrameTime = 0;
+      let gameRunning = false;
+
+      // Button click handler
+      function handleControlButtonClick() {
+        if (!gameRunning) {
+          // Start/restart the game
+          startGame();
+          controlBtn.textContent = "Restart Simulation";
+        } else {
+          // Stop current game
+          gameRunning = false;
+
+          // Clear existing tanks
+          tanks = [];
+
+          // Small delay before starting new game
+          setTimeout(startGame, 100);
+        }
+      }
+
+      // Resize canvas to fill window
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        statsPanel.textContent = `Canvas size: ${canvas.width}x${canvas.height}`;
+      }
+
+      // Initialize on window load
+      window.onload = function () {
+        resizeCanvas();
+        window.addEventListener("resize", resizeCanvas);
+
+        // Set initial stats message
+        statsPanel.innerHTML = "<p>Click 'Start Simulation' to begin</p>";
+
+        // Setup button
+        controlBtn.addEventListener("click", handleControlButtonClick);
+      };
+
+      // Tank class
+      class Tank {
+        constructor(x, y, colorValue) {
+          this.x = x;
+          this.y = y;
+          this.colorValue = colorValue;
+          this.lastFired = 0;
+          this.projectiles = [];
+          this.targetEnemy = null;
+          this.rotation = Math.random() * Math.PI * 2; // Random initial rotation in radians
+          this.targetRotation = this.rotation;
+          this.rotationSpeed = 0.003; // Radians per millisecond (slow rotation)
+
+          // Individual tank properties for natural behavior
+          this.movementDelay = Math.random() * 3000; // Random delay before movement
+          this.lastMovement = Date.now() - Math.random() * 2000; // Random initial timing
+          this.movementDuration = 2000 + Math.random() * 3000; // How long tank moves before pausing
+          this.pauseDuration = 1000 + Math.random() * 4000; // How long tank pauses between movements
+          this.firingDelay = Math.random() * FIRING_COOLDOWN; // Random initial firing delay
+          this.isMoving = false;
+
+          // Slightly different speed for each tank
+          this.speed = TANK_SPEED * (0.8 + Math.random() * 0.4); // 80%-120% of base speed
+        }
+
+        update(deltaTime) {
+          const now = Date.now();
+
+          // Find target
+          this.findTarget();
+
+          // Update rotation toward target or movement direction
+          if (this.targetEnemy) {
+            // Calculate angle to target
+            const dx = this.targetEnemy.x - this.x;
+            const dy = this.targetEnemy.y - this.y;
+            this.targetRotation = Math.atan2(dy, dx);
+          }
+
+          // Smoothly rotate toward target rotation
+          this.updateRotation(deltaTime);
+
+          // Natural movement pattern (move, pause, move, pause)
+          if (!this.isMoving) {
+            // If paused, check if it's time to move again
+            if (now - this.lastMovement > this.pauseDuration) {
+              this.isMoving = true;
+              this.lastMovement = now;
+            }
+          } else {
+            // If moving, check if it's time to pause
+            if (now - this.lastMovement > this.movementDuration) {
+              this.isMoving = false;
+              this.lastMovement = now;
+              // Randomize next durations
+              this.movementDuration = 2000 + Math.random() * 3000;
+              this.pauseDuration = 1000 + Math.random() * 4000;
+            } else {
+              // Only move if properly rotated toward target (within a small threshold)
+              if (this.targetEnemy && this.isRotatedTowardTarget()) {
+                this.moveTowardTarget(deltaTime);
+              }
+            }
+          }
+
+          // Fire only when properly rotated toward target
+          if (
+            this.targetEnemy &&
+            this.isRotatedTowardTarget() &&
+            now - this.lastFired > FIRING_COOLDOWN + this.firingDelay
+          ) {
+            this.fireAtTarget();
+            // Add some randomness to next firing
+            this.firingDelay = Math.random() * (FIRING_COOLDOWN * 0.5);
+          }
+
+          // Update projectiles
+          for (let i = this.projectiles.length - 1; i >= 0; i--) {
+            const projectile = this.projectiles[i];
+            projectile.update(deltaTime);
+
+            // Remove off-screen projectiles
+            if (
+              projectile.x < 0 ||
+              projectile.x > canvas.width ||
+              projectile.y < 0 ||
+              projectile.y > canvas.height
+            ) {
+              this.projectiles.splice(i, 1);
+            }
+          }
+        }
+
+        // Check if tank is rotated close enough to its target
+        isRotatedTowardTarget() {
+          const angleDiff = Math.abs(
+            this.normalizeAngle(this.targetRotation - this.rotation)
+          );
+          return angleDiff < 0.2; // About 11 degrees threshold
+        }
+
+        // Normalize angle to -PI to PI range
+        normalizeAngle(angle) {
+          while (angle > Math.PI) angle -= Math.PI * 2;
+          while (angle < -Math.PI) angle += Math.PI * 2;
+          return angle;
+        }
+
+        // Smoothly rotate toward target rotation
+        updateRotation(deltaTime) {
+          let angleDiff = this.normalizeAngle(
+            this.targetRotation - this.rotation
+          );
+
+          // Determine rotation direction (shortest path)
+          const rotationAmount = this.rotationSpeed * deltaTime;
+
+          if (Math.abs(angleDiff) < rotationAmount) {
+            // Close enough, snap to target rotation
+            this.rotation = this.targetRotation;
+          } else if (angleDiff > 0) {
+            // Rotate clockwise
+            this.rotation += rotationAmount;
+          } else {
+            // Rotate counter-clockwise
+            this.rotation -= rotationAmount;
+          }
+
+          // Keep rotation in valid range
+          this.rotation = this.normalizeAngle(this.rotation);
+        }
+
+        findTarget() {
+          let nearestDistance = Infinity;
+          let nearestEnemy = null;
+
+          for (const tank of tanks) {
+            if (tank === this) continue;
+            if (tank.colorValue === this.colorValue) continue; // Skip same color tanks
+
+            // Calculate physical distance
+            const dx = tank.x - this.x;
+            const dy = tank.y - this.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            // Choose the nearest enemy
+            if (distance < nearestDistance) {
+              nearestDistance = distance;
+              nearestEnemy = tank;
+            }
+          }
+
+          this.targetEnemy = nearestEnemy;
+        }
+
+        moveTowardTarget(deltaTime) {
+          if (!this.targetEnemy || !this.isMoving) return;
+
+          const dx = this.targetEnemy.x - this.x;
+          const dy = this.targetEnemy.y - this.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          // Only move if not in firing range and not too close to target
+          if (
+            distance > FIRING_RANGE - TANK_SIZE &&
+            distance > TANK_SIZE * 1.5
+          ) {
+            const vx = (dx / distance) * this.speed * deltaTime;
+            const vy = (dy / distance) * this.speed * deltaTime;
+
+            // Calculate proposed new position
+            let newX = this.x + vx;
+            let newY = this.y + vy;
+
+            // Check bounds
+            if (newX < TANK_SIZE / 2) newX = TANK_SIZE / 2;
+            if (newX > canvas.width - TANK_SIZE / 2)
+              newX = canvas.width - TANK_SIZE / 2;
+            if (newY < TANK_SIZE / 2) newY = TANK_SIZE / 2;
+            if (newY > canvas.height - TANK_SIZE / 2)
+              newY = canvas.height - TANK_SIZE / 2;
+
+            // Check for collision with other tanks before moving
+            let canMove = true;
+            for (const otherTank of tanks) {
+              if (otherTank === this) continue;
+
+              const otherDx = newX - otherTank.x;
+              const otherDy = newY - otherTank.y;
+              const otherDistance = Math.sqrt(
+                otherDx * otherDx + otherDy * otherDy
+              );
+
+              // If too close to another tank, don't move
+              if (otherDistance < TANK_SIZE * 1.2) {
+                canMove = false;
+                break;
+              }
+            }
+
+            // Only update position if no collision
+            if (canMove) {
+              this.x = newX;
+              this.y = newY;
+            } else {
+              // Try to move slightly to the side to avoid getting stuck
+              const perpX = (-dy / distance) * this.speed * deltaTime * 0.5;
+              const perpY = (dx / distance) * this.speed * deltaTime * 0.5;
+
+              // Try moving perpendicular
+              newX = this.x + perpX;
+              newY = this.y + perpY;
+
+              // Check bounds again
+              if (newX < TANK_SIZE / 2) newX = TANK_SIZE / 2;
+              if (newX > canvas.width - TANK_SIZE / 2)
+                newX = canvas.width - TANK_SIZE / 2;
+              if (newY < TANK_SIZE / 2) newY = TANK_SIZE / 2;
+              if (newY > canvas.height - TANK_SIZE / 2)
+                newY = canvas.height - TANK_SIZE / 2;
+
+              // Check for collision again
+              canMove = true;
+              for (const otherTank of tanks) {
+                if (otherTank === this) continue;
+
+                const otherDx = newX - otherTank.x;
+                const otherDy = newY - otherTank.y;
+                const otherDistance = Math.sqrt(
+                  otherDx * otherDx + otherDy * otherDy
+                );
+
+                if (otherDistance < TANK_SIZE * 1.2) {
+                  canMove = false;
+                  break;
+                }
+              }
+
+              if (canMove) {
+                this.x = newX;
+                this.y = newY;
+              }
+            }
+          }
+        }
+
+        fireAtTarget() {
+          if (!this.targetEnemy) return;
+
+          const dx = this.targetEnemy.x - this.x;
+          const dy = this.targetEnemy.y - this.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance < FIRING_RANGE) {
+            // Fire in the direction the tank is facing
+            const vx = Math.cos(this.rotation) * PROJECTILE_SPEED;
+            const vy = Math.sin(this.rotation) * PROJECTILE_SPEED;
+
+            // Create projectile at the end of the barrel
+            const barrelLength = TANK_SIZE * 0.7;
+            const projectileX = this.x + Math.cos(this.rotation) * barrelLength;
+            const projectileY = this.y + Math.sin(this.rotation) * barrelLength;
+
+            // Create projectile
+            this.projectiles.push(
+              new Projectile(projectileX, projectileY, vx, vy, this.colorValue)
+            );
+
+            this.lastFired = Date.now();
+          }
+        }
+
+        hit(projectileColorValue) {
+          // True circular stepping logic
+
+          // Skip if same color
+          if (this.colorValue === projectileColorValue) return;
+
+          // Find the shortest path on the color circle
+          // Calculate distance in both directions
+          const clockwiseDistance =
+            (projectileColorValue - this.colorValue + 6) % 6;
+          const counterclockwiseDistance =
+            (this.colorValue - projectileColorValue + 6) % 6;
+
+          // Special case for opposite colors (3 steps either way)
+          // In this case, randomly choose a direction to avoid bias
+          if (clockwiseDistance === counterclockwiseDistance) {
+            if (Math.random() < 0.5) {
+              // Move one step clockwise
+              this.colorValue = (this.colorValue + 1) % 6;
+              if (this.colorValue === 0) this.colorValue = 6;
+            } else {
+              // Move one step counterclockwise
+              this.colorValue = this.colorValue - 1;
+              if (this.colorValue === 0) this.colorValue = 6;
+            }
+          }
+          // Otherwise use the shortest path
+          else if (clockwiseDistance < counterclockwiseDistance) {
+            // Move one step clockwise
+            this.colorValue = (this.colorValue + 1) % 6;
+            if (this.colorValue === 0) this.colorValue = 6;
+          } else {
+            // Move one step counterclockwise
+            this.colorValue = this.colorValue - 1;
+            if (this.colorValue === 0) this.colorValue = 6;
+          }
+        }
+
+        draw() {
+          ctx.save();
+
+          // Move to tank position and rotate
+          ctx.translate(this.x, this.y);
+          ctx.rotate(this.rotation);
+
+          // Draw tank body (rounded rectangle)
+          ctx.fillStyle = COLORS[this.colorValue];
+          ctx.beginPath();
+          ctx.roundRect(
+            -TANK_SIZE / 2,
+            -TANK_SIZE / 2,
+            TANK_SIZE,
+            TANK_SIZE,
+            5
+          );
+          ctx.fill();
+
+          // Draw tank barrel
+          ctx.fillStyle = COLORS[this.colorValue];
+          ctx.fillRect(0, -TANK_SIZE / 8, TANK_SIZE * 0.7, TANK_SIZE / 4);
+
+          // Draw turret
+          ctx.beginPath();
+          ctx.arc(0, 0, TANK_SIZE / 3, 0, Math.PI * 2);
+          ctx.fillStyle = this.isRotatedTowardTarget() ? "#FFFFFF" : "#AAAAAA";
+          ctx.globalAlpha = 0.2;
+          ctx.fill();
+          ctx.globalAlpha = 1.0;
+
+          // Draw color value
+          ctx.fillStyle = "#FFFFFF";
+          ctx.font = "14px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(this.colorValue.toString(), 0, 0);
+
+          // Draw movement state indicator
+          if (this.isMoving) {
+            ctx.fillStyle = "#FFFFFF";
+            ctx.beginPath();
+            ctx.arc(TANK_SIZE / 4, -TANK_SIZE / 4, 3, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          ctx.restore();
+
+          // Draw projectiles (not in the rotated context)
+          for (const projectile of this.projectiles) {
+            projectile.draw();
+          }
+        }
+
+        checkProjectileHit(projectile) {
+          const dx = this.x - projectile.x;
+          const dy = this.y - projectile.y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          return distance < TANK_SIZE / 2 + PROJECTILE_SIZE / 2;
+        }
+      }
+
+      // Projectile class
+      class Projectile {
+        constructor(x, y, vx, vy, colorValue) {
+          this.x = x;
+          this.y = y;
+          this.vx = vx;
+          this.vy = vy;
+          this.colorValue = colorValue;
+        }
+
+        update(deltaTime) {
+          this.x += this.vx * deltaTime;
+          this.y += this.vy * deltaTime;
+        }
+
+        draw() {
+          ctx.fillStyle = COLORS[this.colorValue];
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, PROJECTILE_SIZE / 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Create tanks
+      function createTanks() {
+        const tanks = [];
+        const minDistance = TANK_SIZE * 3;
+
+        // Create 5 tanks for each color (1-6)
+        for (let color = 1; color <= NUM_COLORS; color++) {
+          for (let i = 0; i < TANKS_PER_COLOR; i++) {
+            let x, y;
+            let validPosition = false;
+            let attempts = 0;
+
+            while (!validPosition && attempts < 100) {
+              x = TANK_SIZE + Math.random() * (canvas.width - TANK_SIZE * 2);
+              y = TANK_SIZE + Math.random() * (canvas.height - TANK_SIZE * 2);
+
+              validPosition = true;
+
+              // Check against existing tanks
+              for (const tank of tanks) {
+                const dx = x - tank.x;
+                const dy = y - tank.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < minDistance) {
+                  validPosition = false;
+                  break;
+                }
+              }
+
+              attempts++;
+            }
+
+            // Add tank
+            tanks.push(
+              new Tank(
+                validPosition
+                  ? x
+                  : TANK_SIZE + Math.random() * (canvas.width - TANK_SIZE * 2),
+                validPosition
+                  ? y
+                  : TANK_SIZE + Math.random() * (canvas.height - TANK_SIZE * 2),
+                color
+              )
+            );
+          }
+        }
+
+        return tanks;
+      }
+
+      // Check if all tanks have the same color
+      function allSameColor() {
+        if (tanks.length === 0) return true;
+
+        const firstColor = tanks[0].colorValue;
+        return tanks.every((tank) => tank.colorValue === firstColor);
+      }
+
+      // Game loop
+      function gameLoop(timestamp) {
+        // Calculate delta time
+        const deltaTime = Math.min(timestamp - lastFrameTime, 100);
+        lastFrameTime = timestamp;
+
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Check if battle is over
+        const battleOver = allSameColor();
+
+        // Count tanks of each color
+        const colorCounts = countTanksByColor();
+
+        // Update stats display
+        updateStatsOverlay(colorCounts, battleOver, deltaTime);
+
+        // Update game state if battle not over
+        if (!battleOver) {
+          // Update tanks
+          for (const tank of tanks) {
+            tank.update(deltaTime);
+          }
+
+          // Check for projectile hits
+          for (const tank of tanks) {
+            for (const otherTank of tanks) {
+              if (tank === otherTank) continue;
+
+              for (let i = otherTank.projectiles.length - 1; i >= 0; i--) {
+                const projectile = otherTank.projectiles[i];
+
+                if (tank.checkProjectileHit(projectile)) {
+                  tank.hit(projectile.colorValue);
+                  otherTank.projectiles.splice(i, 1);
+                }
+              }
+            }
+          }
+        }
+
+        // Draw everything
+        for (const tank of tanks) {
+          tank.draw();
+        }
+
+        // Continue loop if game is still running
+        if (gameRunning) {
+          requestAnimationFrame(gameLoop);
+        }
+      }
+
+      // Count tanks of each color
+      function countTanksByColor() {
+        const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+        for (const tank of tanks) {
+          counts[tank.colorValue]++;
+        }
+        return counts;
+      }
+
+      // Update the stats overlay with current counts
+      function updateStatsOverlay(colorCounts, battleOver, deltaTime) {
+        let html = "";
+
+        // Add color counts with colored boxes
+        for (let color = 1; color <= 6; color++) {
+          if (colorCounts[color] > 0) {
+            html += `<div class="color-count" style="background-color: ${
+              COLORS[color]
+            }">
+                        <span style="color: ${getContrastColor(COLORS[color])}">
+                            ${colorNames[color]}: ${colorCounts[color]}
+                        </span>
+                    </div>`;
+          }
+        }
+
+        // Add status message
+        html += "<br><br>";
+        if (battleOver) {
+          const winningColor = Object.keys(colorCounts).find(
+            (c) => colorCounts[c] > 0
+          );
+          html += `Battle ended! ${colorNames[winningColor]} tanks won.`;
+          // Update button text
+          controlBtn.textContent = "Start New Battle";
+        } else {
+          const activeTanks = tanks.filter((t) => t.isMoving).length;
+          html += `Simulation active: ${activeTanks} tanks moving`;
+        }
+
+        // Display FPS
+        const fps = Math.round(1000 / Math.max(1, deltaTime));
+        html += `<br>FPS: ${fps}`;
+
+        // Update the stats element
+        statsPanel.innerHTML = html;
+      }
+
+      // Helper function to get contrasting text color
+      function getContrastColor(hexColor) {
+        // Convert hex to RGB
+        const r = parseInt(hexColor.substr(1, 2), 16);
+        const g = parseInt(hexColor.substr(3, 2), 16);
+        const b = parseInt(hexColor.substr(5, 2), 16);
+
+        // Calculate brightness (simplified formula)
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+
+        // Return black or white based on brightness
+        return brightness > 128 ? "#000000" : "#FFFFFF";
+      }
+
+      // Start the game
+      function startGame() {
+        // Start the game
+        statsPanel.textContent = "Initializing...";
+
+        // Validate canvas size
+        if (canvas.width <= 0 || canvas.height <= 0) {
+          statsPanel.textContent =
+            "Error: Canvas has invalid size. Try refreshing the page.";
+          return;
+        }
+
+        // Create tanks
+        tanks = createTanks();
+
+        // Set initial time
+        lastFrameTime = performance.now();
+
+        // Start game
+        gameRunning = true;
+        requestAnimationFrame(gameLoop);
+
+        statsPanel.textContent = `Simulation started with ${tanks.length} tanks (${TANKS_PER_COLOR} of each color)`;
+      }
+    </script>
+  </body>
+</html>
